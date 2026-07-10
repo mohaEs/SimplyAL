@@ -65,7 +65,7 @@ Install [Node](https://nodejs.org/en/download/), [Yarn](https://classic.yarnpkg.
 If above requirements satisfies:
 
 1. Create an environment with conda
-   `conda create -n NAME_OF_ENVIRONMENT python=3.11`
+   `conda create -n SimplyAL_ENVIRONMENT python=3.11`
 2. install the requirements
    `pip install -r backend/requirements.txt`
 3. install frontend 
@@ -75,11 +75,11 @@ If above requirements satisfies:
 ## Usage
 
 0. open the terminal, activate the enironment
-   `conda activate NAME_OF_ENVIRONMENT`
+   `conda activate SimplyAL_ENVIRONMENT`
 1. run backend
    `python backend/main.py`
 2. if not used nohup in step 1, open a new terminal: </br>
-   `conda activate NAME_OF_ENVIRONMENT` </br>
+   `conda activate SimplyAL_ENVIRONMENT` </br>
    `yarn --cwd ./frontend run dev`</br>
    otherwise </br>
    `yarn --cwd ./frontend run dev`
