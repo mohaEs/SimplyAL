@@ -4,6 +4,8 @@ output
 # Next.js
 frontend/.next/
 
+current_model_inspection.json
+
 # Dependencies
 frontend/node_modules/
 

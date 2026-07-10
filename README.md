@@ -78,12 +78,12 @@ If above requirements satisfies:
    `conda activate NAME_OF_ENVIRONMENT`
 1. run backend
    `python backend/main.py`
-2. if not used nohup in step 1, open a new terminal, 
-   `conda activate NAME_OF_ENVIRONMENT`
+2. if not used nohup in step 1, open a new terminal: </br>
+   `conda activate NAME_OF_ENVIRONMENT` </br>
+   `yarn --cwd ./frontend run dev`</br>
+   otherwise </br>
    `yarn --cwd ./frontend run dev`
-   otherwise
-   `yarn --cwd ./frontend run dev`
-3. The website should open up on `localhost:3000`. or `yourIP:3000`
+3. The website should open up on `localhost:3000`. or `http://yourIP:3000`
    use **chrome** to open the link
 
 
