@@ -107,6 +107,27 @@ The user workflow consists of the following steps:
 11. **Cleanup**: After the project has been successfully exported, users are encouraged to remove temporary project files from the server to release storage resources. This is particularly beneficial when working with large image datasets or when multiple projects are hosted on the same workstation or institutional server.
 
 
+## Inference Without the GUI
+
+After training and exporting a project, the trained model can be used to perform batch inference on new images without launching the SimplyAL interface. This is useful for deploying a trained classifier, evaluating new datasets, or generating predictions in automated workflows.
+
+First, activate your SimplyAL environment, then run:
+
+```bash
+python backend/inference.py \
+    --project exported_project.zip \
+    --csv new_images.csv \
+    --output predictions.csv \
+    --include-probabilities
+```
+where:
+
+- project : Exported SimplyAL project ZIP containing the trained model and configuration.
+- csv : Input CSV file containing a file_path column with the images to classify.
+- output : Output CSV file where predictions will be saved.
+- include-probabilities : (Optional) Include the predicted probability for each class in the output.
+
+
 ## Sampling Strategies
 
 - `least_confidence`: Selects samples where the model's highest predicted class probability is lowest, indicating uncertainty

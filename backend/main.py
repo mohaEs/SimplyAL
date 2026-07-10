@@ -32,6 +32,8 @@ from sklearn.metrics import f1_score as sklearn_f1_score
 import csv
 from io import StringIO
 
+from export_utils import add_inference_artifacts
+
 class ProjectInit(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     
@@ -3200,8 +3202,19 @@ async def export_project():
                 metadata['episode_breakdown'].append(episode_info)
             
             metadata_json = json.dumps(metadata, indent=2)
-            zipf.writestr("metadata.json", metadata_json.encode('utf-8'))
+            zipf.writestr("metadata.json", metadata_json.encode('utf-8'))            
             print(f"Added metadata to ZIP with labels: {current_labels}")
+
+            inference_export_status = add_inference_artifacts(
+                zip_file=zipf,
+                model=al_manager.model,
+                model_type=model_type_name,
+                label_names=current_labels,
+                image_size=224,
+                normalize_mean=(0.485, 0.456, 0.406),
+                normalize_std=(0.229, 0.224, 0.225),
+            )
+            print(f"Inference export status: {inference_export_status}")
 
             csv_dir = os.path.join(al_manager.output_dir, 'episode_csvs')
             if os.path.exists(csv_dir):
