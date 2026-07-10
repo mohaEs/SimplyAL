@@ -1,0 +1,33 @@
+backend/output
+output
+
+# Next.js
+frontend/.next/
+
+# Dependencies
+frontend/node_modules/
+
+# Logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.production.local
+
+# Build output
+frontend/out/
+frontend/dist/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+__pycache__
