@@ -160,6 +160,8 @@ Please use GitHub Issues for bug reports and feature requests.
 ## Images
 
 ![](images/landingPage.png)
+
 ![](images/preview.png)
+
 ![](images/episodes.png)
 
