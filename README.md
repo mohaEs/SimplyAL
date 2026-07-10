@@ -7,7 +7,7 @@ This is a React app that can be used to conduct Active Learning locally for imag
 Srikar Kusumanchi (https://github.com/Srikark-17) </br>
 Mohammad Eslami (https://github.com/mohaEs)
 
-## Citations: 
+## Citation: 
 
 
 ## Features
