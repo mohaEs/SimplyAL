@@ -89,7 +89,7 @@ If above requirements satisfies:
 
 ## User Workflow
 
-An example workflow is shown in this video: 
+An example workflow is shown in this video: https://youtu.be/8ykVp26kias
 
 
 The user workflow consists of the following steps:
