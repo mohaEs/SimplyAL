@@ -1,4 +1,10 @@
-const API_URL = "http://localhost:8000";
+// Backend address: NEXT_PUBLIC_API_URL if set at build time; otherwise port 8000
+// on the host that served this page, so the app also works from other computers.
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8000`
+    : "http://localhost:8000");
 
 const activeLearnAPI = {
   async initializeProject({
@@ -95,7 +101,7 @@ const activeLearnAPI = {
     return result; // Now includes batch_complete and is_training flags
   },
 
-  async trainModel(epochs = 5, batchSize = 16, learningRate = 0.001) {
+  async trainModel(epochs = 5, batchSize = 16, learningRate = 1e-5) {
     const response = await fetch(`${API_URL}/train`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -108,7 +114,7 @@ const activeLearnAPI = {
     return response.json();
   },
 
-  async startEpisode(epochs = 5, batchSize = 16, learningRate = 0.001) {
+  async startEpisode(epochs = 5, batchSize = 16, learningRate = 1e-5) {
     const response = await fetch(`${API_URL}/train-episode`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -293,7 +299,7 @@ const activeLearnAPI = {
       epochs: config.epochs,
       batch_size: config.batch_size,
       sampling_strategy: config.sampling_strategy,
-      learning_rate: 0.001,
+      learning_rate: config.lr_config?.initial_lr ?? 1e-5,
     };
 
     const response = await fetch(`${API_URL}/start-automated-training`, {
@@ -733,3 +739,5 @@ const activeLearnAPI = {
 };
 
 export default activeLearnAPI;
+
+export { API_URL };

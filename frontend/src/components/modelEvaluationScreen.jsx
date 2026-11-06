@@ -1,3 +1,4 @@
+import { API_URL } from "@/services/activelearning";
 import React, { useState } from "react";
 import {
   Card,
@@ -103,7 +104,7 @@ const ModelEvaluationScreen = ({
                 {/* Image */}
                 <div className="relative">
                   <img
-                    src={`http://localhost:8000/image/${pred.image_id}`}
+                    src={`${API_URL}/image/${pred.image_id}`}
                     alt={`Prediction ${index + 1}`}
                     className="w-full h-full object-cover rounded-lg border-2 border-gray-200"
                     onError={(e) => {

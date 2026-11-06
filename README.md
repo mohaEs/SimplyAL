@@ -1,10 +1,11 @@
-# SimplYAL: An Active Learning Interface
+# SimplyAL: An Active Learning Interface
 
-This is a React app that can be used to conduct Active Learning locally for image annotation and train models. It can be used by non-professionals, as well. Active Learning is an iterative machine learning approach where the model intelligently selects the most informative samples for human labeling, rather than requiring humans to label every piece of data. The system starts with a small set of labeled images, trains an initial model, and then identifies uncertain or ambiguous images that would most improve the model's performance when labeled. This significantly reduces the time and effort needed for data labeling while maintaining high model quality. Users can simply review and label the suggested images through an intuitive interface, and the model continuously learns and improves from this focused feedback. This approach is particularly valuable when working with large image datasets where labeling everything would be impractical.
+This is a Next.js app that can be used to conduct Active Learning locally for image annotation and train models. It can be used by non-professionals, as well. Active Learning is an iterative machine learning approach where the model intelligently selects the most informative samples for human labeling, rather than requiring humans to label every piece of data. The system starts with a small set of labeled images, trains an initial model, and then identifies uncertain or ambiguous images that would most improve the model's performance when labeled. This significantly reduces the time and effort needed for data labeling while maintaining high model quality. Users can simply review and label the suggested images through an intuitive interface, and the model continuously learns and improves from this focused feedback. This approach is particularly valuable when working with large image datasets where labeling everything would be impractical.
 
 
-## contributors: 
+## Contributors: 
 Srikar Kusumanchi (https://github.com/Srikark-17) </br>
+Srinath Narayanan (https://github.com/srinathn07) </br>
 Mohammad Eslami (https://github.com/mohaEs)
 
 ## Citation: 
@@ -36,6 +37,10 @@ Mohammad Eslami (https://github.com/mohaEs)
         ├── Checkpoints
         └── Project Storage
 
+## Citation
+Please cite the following paper if you found this software useful for your research.
+
+-   SimplyAL: An Open-Source Toolbox for Active Learning-Based Image Annotation and Model Training (SoftwareX Journal)
 
 ## Installation
 
@@ -66,9 +71,11 @@ If above requirements satisfies:
 
 1. Create an environment with conda
    `conda create -n SimplyAL_ENVIRONMENT python=3.11`
-2. install the requirements
+2. activate the environment
+   `conda activate SimplyAL_ENVIRONMENT`
+3. install the requirements
    `pip install -r backend/requirements.txt`
-3. install frontend 
+4. install frontend 
    `yarn --cwd ./frontend`
 
 
@@ -133,7 +140,7 @@ where:
 - `least_confidence`: Selects samples where the model's highest predicted class probability is lowest, indicating uncertainty
 - `margin`: Picks samples with the smallest difference between the top two predicted class probabilities, suggesting confusion between classes
 - `entropy`: Chooses samples with highest entropy in their prediction probabilities, indicating maximum uncertainty across all classes
-- `diversity`: Selects samples that are most different from the currently labeled data in feature space, ensuring varied training examples
+- `diversity` (core-set): Repeatedly selects the unlabeled image farthest from all labeled and already selected images in the model's penultimate-layer embedding space (k-center greedy; Sener and Savarese, ICLR 2018), so each batch covers the pool
 
 
 ## Clinical Deployment
@@ -142,6 +149,12 @@ SimplyAL is designed for self-hosted deployment on secure institutional
 infrastructure. Users access the software through a web browser while
 training, GPUs, and image storage remain centralized on a workstation or
 server.
+
+The backend has no user authentication, so reach it only through an
+institutional VPN, an SSH tunnel, or an authenticated reverse proxy. Each
+backend process serves one project at a time. The interface calls the backend
+on port 8000 of the host that served the page; to use another address, set
+`NEXT_PUBLIC_API_URL` (for example `http://myserver:8001`) before starting the frontend.
 
 
 ## License

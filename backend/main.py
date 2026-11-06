@@ -16,6 +16,7 @@ from typing import Literal, List, Tuple
 import json
 import time
 import types
+import copy
 import asyncio
 import concurrent.futures
 import glob
@@ -33,6 +34,49 @@ import csv
 from io import StringIO
 
 from export_utils import add_inference_artifacts
+
+
+def get_embeddings(model, tensors, device, batch_size=64):
+    """Unit-normalized penultimate-layer embeddings (torchvision ResNets and timm models)."""
+    if len(tensors) == 0:
+        return torch.empty(0, 0)
+    was_training = model.training
+    model.eval()
+    chunks = []
+    with torch.no_grad():
+        for start in range(0, len(tensors), batch_size):
+            x = torch.stack(tensors[start:start + batch_size]).to(device)
+            if hasattr(model, "forward_features") and hasattr(model, "forward_head"):
+                z = model.forward_head(model.forward_features(x), pre_logits=True)  # timm
+            elif hasattr(model, "fc"):
+                head, model.fc = model.fc, nn.Identity()  # torchvision ResNet
+                try:
+                    z = model(x)
+                finally:
+                    model.fc = head
+            else:
+                raise ValueError("Core-set sampling needs forward_head (timm) or fc (torchvision)")
+            chunks.append(z.flatten(1).float().cpu())
+    model.train(was_training)
+    return torch.nn.functional.normalize(torch.cat(chunks), dim=1)
+
+
+def coreset_select(pool_emb, labeled_emb, k, chunk=4096):
+    """k-center greedy (Sener and Savarese, 2018); returns row indices of pool_emb."""
+    n = pool_emb.shape[0]
+    if labeled_emb.numel() > 0:
+        min_dist = torch.cat([torch.cdist(pool_emb[s:s + chunk], labeled_emb).min(dim=1).values
+                              for s in range(0, n, chunk)])
+    else:
+        min_dist = torch.full((n,), float("inf"))
+    chosen = []
+    for _ in range(min(k, n)):
+        idx = int(torch.argmax(min_dist))
+        chosen.append(idx)
+        min_dist = torch.minimum(min_dist, torch.cdist(pool_emb, pool_emb[idx:idx + 1]).squeeze(1))
+        min_dist[idx] = -1.0
+    return chosen
+
 
 class ProjectInit(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -70,7 +114,7 @@ class ProjectInit(BaseModel):
         description="Number of training epochs"
     )
     learning_rate: float = Field(
-        default=0.001,
+        default=1e-5,
         gt=0.0,
         description="Initial learning rate"
     )
@@ -79,7 +123,7 @@ class TrainingConfig(BaseModel):
     epochs: int
     batch_size: int
     sampling_strategy: str
-    learning_rate: float = 0.001
+    learning_rate: float = 1e-5
 
 class BatchRequest(BaseModel):
     strategy: str
@@ -92,7 +136,7 @@ class LabelSubmission(BaseModel):
 class TrainEpisodeRequest(BaseModel):
     epochs: int = 5
     batch_size: int = 16
-    learning_rate: float = 0.001
+    learning_rate: float = 1e-5
 
 class SimpleViTClassifier(nn.Module):
     """Simple ViT-based classifier for RETFound and similar models"""
@@ -199,7 +243,7 @@ class ActiveLearningManager:
         self.lr_scheduler = None
         self.lr_config = {
             'strategy': 'plateau',
-            'initial_lr': 0.001,
+            'initial_lr': 1e-5,
             'factor': 0.1,
             'patience': 5,
             'min_lr': 1e-6
@@ -215,7 +259,7 @@ class ActiveLearningManager:
         'sampling_strategy': 'least_confidence',
         'batch_size': 16,
         'epochs': 5,
-        'learning_rate': 0.001,
+        'learning_rate': 1e-5,
         'scheduler': {
             'strategy': 'plateau',
             'params': {
@@ -669,41 +713,35 @@ class ActiveLearningManager:
 
     def rebuild_validation_split(self, val_split: float = None):
         """
-        Rebuild validation set from all currently labeled samples.
-        Used before every training episode.
-        """
+        Assign newly labeled images to training or validation once.
 
+        Images keep their assignment in later episodes, so validation images are
+        never used for training (the model is warm-started across episodes).
+        """
         if val_split is not None:
             self.config["val_split"] = val_split
-
         val_split = self.config.get("val_split", 0.2)
 
-        # Move old validation samples back to labeled_data
-        for img_id, (img_tensor, label) in list(self.validation_data.items()):
-            if label is not None:
-                self.labeled_data[img_id] = (img_tensor, label)
+        if getattr(self, "_split_project", object()) != self.output_dir:
+            # New or imported project: keep any split that already exists.
+            self._split_project = self.output_dir
+            self._split_assigned_ids = (
+                set(self.labeled_data) | set(self.validation_data)
+                if self.validation_data else set()
+            )
 
-        self.validation_data = {}
-
-        labeled_ids = list(self.labeled_data.keys())
-        np.random.shuffle(labeled_ids)
-
-        val_size = int(len(labeled_ids) * val_split)
-
-        if len(labeled_ids) > 1 and val_size == 0:
+        new_ids = [i for i in self.labeled_data if i not in self._split_assigned_ids]
+        np.random.shuffle(new_ids)
+        val_size = int(round(len(new_ids) * val_split))
+        if not self.validation_data and len(new_ids) > 1 and val_size == 0:
             val_size = 1
-
-        val_ids = labeled_ids[:val_size]
-
-        for img_id in val_ids:
-            img_tensor, label = self.labeled_data.pop(img_id)
-            self.validation_data[img_id] = (img_tensor, label)
+        for img_id in new_ids[:val_size]:
+            self.validation_data[img_id] = self.labeled_data.pop(img_id)
+        self._split_assigned_ids.update(new_ids)
 
         print(
-            f"Validation rebuilt: "
-            f"{len(self.validation_data)} validation / "
-            f"{len(self.labeled_data)} training labeled / "
-            f"val_split={val_split}"
+            f"Validation split: {len(self.validation_data)} validation / "
+            f"{len(self.labeled_data)} training labeled / val_split={val_split}"
         )
 
 
@@ -717,7 +755,7 @@ class ActiveLearningManager:
             
             self.optimizer = torch.optim.Adam(
                 self.model.parameters(), 
-                lr=self.training_config.get('learning_rate', 0.001)
+                lr=self.training_config.get('learning_rate', 1e-5)
             )
             
             print(f"Custom model '{model_name}' set successfully")
@@ -760,7 +798,7 @@ class ActiveLearningManager:
             
             self.optimizer = torch.optim.Adam(
                 self.model.parameters(), 
-                lr=self.training_config.get('learning_rate', 0.001)
+                lr=self.training_config.get('learning_rate', 1e-5)
             )
             
             return True
@@ -900,7 +938,7 @@ class ActiveLearningManager:
                 outputs = self.model(img_tensor)
                 probs = torch.softmax(outputs, dim=1)
                 
-                features = self._get_features(img_tensor) if strategy == "diversity" else None
+                features = None  # core-set embeddings are computed in _select_diverse_samples
                 
                 uncertainty = self._compute_uncertainty(probs, strategy, features)
                 
@@ -1029,41 +1067,19 @@ class ActiveLearningManager:
                     accuracy = sum(agreements) / len(agreements) * 100
                     print(f"Episode {self.episode} machine accuracy: {accuracy:.2f}% ({sum(agreements)}/{len(agreements)} correct)")
 
-    def _select_diverse_samples(self, sample_scores: List[Tuple[int, float, List[dict]]], 
-                          batch_size: int) -> List[Tuple[int, float, List[dict]]]:
+    def _select_diverse_samples(self, sample_scores: List[Tuple[int, float, List[dict]]],
+                                batch_size: int) -> List[Tuple[int, float, List[dict]]]:
         """
-        Select diverse samples using greedy approach
+        Core-set selection (k-center greedy; Sener and Savarese, 2018) on
+        unit-normalized penultimate-layer embeddings: repeatedly add the pool
+        image farthest from all labeled and already selected images.
         """
-        if batch_size >= len(sample_scores):
-            return sample_scores
-            
-        selected = []
-        remaining = sample_scores.copy()
-        
-        remaining.sort(key=lambda x: x[1], reverse=True)
-        selected.append(remaining.pop(0))
-        
-        while len(selected) < batch_size and remaining:
-
-            remaining_features = []
-            for _, _, preds in remaining:
-                probs = torch.tensor([[p["confidence"] for p in preds]])
-                remaining_features.append(probs)
-            remaining_features = torch.cat(remaining_features, dim=0)
-            
-            selected_features = []
-            for _, _, preds in selected:
-                probs = torch.tensor([[p["confidence"] for p in preds]])
-                selected_features.append(probs)
-            selected_features = torch.cat(selected_features, dim=0)
-            
-            distances = torch.cdist(remaining_features, selected_features)
-            min_distances = distances.min(dim=1)[0]
-            
-            best_idx = min_distances.argmax().item()
-            selected.append(remaining.pop(best_idx))
-        
-        return selected
+        pool_ids = [img_id for img_id, _, _ in sample_scores]
+        pool_emb = get_embeddings(self.model, [self.unlabeled_data[i] for i in pool_ids], self.device)
+        known = ([t for t, _ in self.labeled_data.values()]
+                 + [t for t, _ in self.validation_data.values()])
+        labeled_emb = get_embeddings(self.model, known, self.device)
+        return [sample_scores[j] for j in coreset_select(pool_emb, labeled_emb, batch_size)]
 
     def train_epoch(self, optimizer, criterion, batch_size=16):
         """Train for one epoch with proper validation"""
@@ -1249,7 +1265,7 @@ class ActiveLearningManager:
 
                     if val_acc > best_val_acc:
                         best_val_acc = val_acc
-                        best_model = self.model.state_dict().copy()
+                        best_model = copy.deepcopy(self.model.state_dict())
 
                     self.plot_training_progress(epoch + 1, train_loss, val_acc)
                 except Exception as e:
@@ -1416,7 +1432,7 @@ class ActiveLearningManager:
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
                     best_f1 = val_f1
-                    best_model_state = self.model.state_dict().copy()
+                    best_model_state = copy.deepcopy(self.model.state_dict())
                     
                     try:
                         if self.checkpoint_manager:
@@ -1652,7 +1668,7 @@ class ActiveLearningManager:
             elif strategy == "margin":
 
                 sorted_probs, _ = torch.sort(probs, dim=1, descending=True)
-                return float(sorted_probs[0][0] - sorted_probs[0][1]).item()
+                return float(1.0 - (sorted_probs[0][0] - sorted_probs[0][1]).item())  # small margin, high score
                 
             elif strategy == "entropy":
 
@@ -1662,10 +1678,12 @@ class ActiveLearningManager:
                 return float(entropy.item())
                 
             elif strategy == "diversity":
-                if features is None:
-                    raise ValueError("Features required for diversity sampling")
+                # Core-set selection happens in _select_diverse_samples; the
+                # per-image score shown in the interface is least confidence.
+                return float(1 - torch.max(probs).item())
 
-                return self._compute_diversity_score(features)
+            elif strategy == "random":
+                return random.random()
                 
             else:
                 raise ValueError(f"Unknown sampling strategy: {strategy}")
@@ -2141,7 +2159,7 @@ class AutomatedTrainingManager:
             'sampling_strategy': 'least_confidence',
             'batch_size': 16,
             'epochs': 5,
-            'learning_rate': 0.001
+            'learning_rate': 1e-5
         }
         
         self.min_required_samples = 10
@@ -2234,7 +2252,7 @@ class AutomatedTrainingManager:
                 'epochs': int(config['epochs']),
                 'batch_size': int(config['batch_size']),
                 'sampling_strategy': str(config['sampling_strategy']),
-                'learning_rate': float(config.get('learning_rate', 0.001))
+                'learning_rate': float(config.get('learning_rate', 1e-5))
             }
             
             print(f"Processed config: {self.training_config}")
@@ -2373,7 +2391,7 @@ class AutomatedTrainingManager:
         training_result = self.al_manager.train_episode(
             epochs=self.al_manager.config.get('epochs', 10),
             batch_size=self.al_manager.config.get('batch_size', 16),
-            learning_rate=self.al_manager.config.get('learning_rate', 0.001)
+            learning_rate=self.al_manager.config.get('learning_rate', 1e-5)
         )
         d
         metrics = {
@@ -2399,7 +2417,7 @@ class LRSchedulerManager:
     def __init__(self, optimizer, strategy="plateau", **kwargs):
         self.optimizer = optimizer
         self.strategy = strategy
-        self.initial_lr = kwargs.get('initial_lr', 0.001)
+        self.initial_lr = kwargs.get('initial_lr', 1e-5)
         self.history = []
         self.scheduler = self._create_scheduler(**kwargs)
         
@@ -2625,7 +2643,7 @@ async def initialize_project(request: ProjectInit):
             'sampling_strategy': request.sampling_strategy if hasattr(request, 'sampling_strategy') else 'least_confidence',
             'batch_size': request.batch_size if hasattr(request, 'batch_size') else 16,
             'epochs': request.epochs if hasattr(request, 'epochs') else 10,
-            'learning_rate': request.learning_rate if hasattr(request, 'learning_rate') else 0.001,
+            'learning_rate': request.learning_rate if hasattr(request, 'learning_rate') else 1e-5,
         }
         
         result = al_manager.initialize_project(
@@ -2634,6 +2652,9 @@ async def initialize_project(request: ProjectInit):
             num_classes=request.num_classes,
             config=training_config
         )
+        # Use the chosen strategy for the preview and for batches after it
+        al_manager.config["sampling_strategy"] = training_config["sampling_strategy"]
+        automated_trainer.training_config["sampling_strategy"] = training_config["sampling_strategy"]
         
         return {
             "status": "success",
@@ -2685,6 +2706,7 @@ async def get_batch(request: BatchRequest):
         al_manager.config["batch_size"] = requested_batch_size
         automated_trainer.training_config["batch_size"] = requested_batch_size
         automated_trainer.training_config["sampling_strategy"] = request.strategy
+        al_manager.config["sampling_strategy"] = request.strategy
 
         batch = al_manager.get_next_batch(
             strategy=request.strategy,
@@ -2734,7 +2756,7 @@ async def submit_label(submission: LabelSubmission):
 async def train_model(
     epochs: int = 5,
     batch_size: int = 16,
-    learning_rate: float = 0.001
+    learning_rate: float = 1e-5
 ):
     """Train/retrain model on labeled data"""
     try:
@@ -3284,7 +3306,7 @@ async def import_model(uploaded_file: UploadFile = File(...)):
                 'sampling_strategy': training_config.get('sampling_strategy', 'least_confidence'),
                 'epochs': training_config.get('epochs', 5),
                 'batch_size': training_config.get('batch_size', 16),
-                'learning_rate': training_config.get('learning_rate', 0.001)
+                'learning_rate': training_config.get('learning_rate', 1e-5)
             })
         
         return {
@@ -3385,7 +3407,7 @@ def train_episode(self, epochs: int, batch_size: int, learning_rate: float):
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_f1 = val_f1
-                best_model_state = self.model.state_dict().copy()
+                best_model_state = copy.deepcopy(self.model.state_dict())
                 
                 try:
                     if self.checkpoint_manager:
@@ -3892,9 +3914,9 @@ async def get_lr_scheduler_status():
         if al_manager.lr_scheduler is None:
             return {
                 "strategy": "plateau",
-                "current_lr": 0.001,
+                "current_lr": 1e-5,
                 "history": [],
-                "initial_lr": 0.001
+                "initial_lr": 1e-5
             }
             
         return al_manager.lr_scheduler.get_status()
@@ -4979,7 +5001,7 @@ async def import_project(uploaded_file: UploadFile = File(...)):
                     'sampling_strategy': hyperparameters.get('sampling_strategy', 'least_confidence'),
                     'epochs': hyperparameters.get('epochs', 10),
                     'batch_size': hyperparameters.get('batch_size', 16),
-                    'learning_rate': hyperparameters.get('learning_rate', 0.001)
+                    'learning_rate': hyperparameters.get('learning_rate', 1e-5)
                 })
             
             al_manager.labeled_data.clear()
